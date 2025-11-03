@@ -15,6 +15,7 @@ import androidx.lifecycle.Observer
 import androidx.work.*
 import com.example.lab_week_08.worker.FirstWorker
 import com.example.lab_week_08.worker.SecondWorker
+import com.example.lab_week_08.worker.ThirdWorker
 
 class MainActivity : AppCompatActivity() {
 
@@ -25,14 +26,13 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
 
-        // Supaya layout tidak tertutup status bar
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
-        // ==== Request izin notifikasi (wajib Android 13+) ====
+        // ✅ Request notification permission (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
@@ -42,66 +42,79 @@ class MainActivity : AppCompatActivity() {
         }
 
         val id = "001"
-
-        // Constraint: biar selalu bisa jalan
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
             .build()
 
-        // Worker Pertama
         val firstRequest = OneTimeWorkRequest.Builder(FirstWorker::class.java)
             .setConstraints(constraints)
             .setInputData(getIdInputData(FirstWorker.INPUT_DATA_ID, id))
             .build()
 
-        // Worker Kedua
         val secondRequest = OneTimeWorkRequest.Builder(SecondWorker::class.java)
             .setConstraints(constraints)
             .setInputData(getIdInputData(SecondWorker.INPUT_DATA_ID, id))
             .build()
 
-        // Jalankan berurutan: First -> Second
+        val thirdRequest = OneTimeWorkRequest.Builder(ThirdWorker::class.java)
+            .setConstraints(constraints)
+            .setInputData(getIdInputData(ThirdWorker.INPUT_DATA_ID, id))
+            .build()
+
+        // 🔄 WorkManager Sequence: First → Second → Third
         workManager.beginWith(firstRequest)
             .then(secondRequest)
+            .then(thirdRequest)
             .enqueue()
 
-        // Observer Worker Pertama
-        workManager.getWorkInfoByIdLiveData(firstRequest.id)
-            .observe(this) { info ->
-                if (info != null && info.state.isFinished) {
-                    showResult("First process is done")
-                }
-            }
+        // Observe: FIRST WORKER
+        workManager.getWorkInfoByIdLiveData(firstRequest.id).observe(this) { info ->
+            if (info != null && info.state.isFinished) showResult("First process is done")
+        }
 
-        // Observer Worker Kedua
-        workManager.getWorkInfoByIdLiveData(secondRequest.id)
-            .observe(this) { info ->
-                if (info != null && info.state.isFinished) {
-                    showResult("Second process is done")
-                    launchNotificationService() // 🔔 panggil service setelah worker kedua selesai
-                }
+        // Observe: SECOND WORKER
+        workManager.getWorkInfoByIdLiveData(secondRequest.id).observe(this) { info ->
+            if (info != null && info.state.isFinished) {
+                showResult("Second process is done")
+                startNotificationService(id)
             }
+        }
+
+        // Observe: THIRD WORKER
+        workManager.getWorkInfoByIdLiveData(thirdRequest.id).observe(this) { info ->
+            if (info != null && info.state.isFinished) {
+                showResult("Third process is done")
+                startSecondNotificationService(id)
+            }
+        }
     }
 
-    // Fungsi buat kirim data ke Worker
     private fun getIdInputData(idKey: String, idValue: String) =
         Data.Builder().putString(idKey, idValue).build()
 
-    // Fungsi buat munculkan Toast
     private fun showResult(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
-    // 🔔 Fungsi panggil NotificationService (Foreground Service)
-    private fun launchNotificationService() {
-        NotificationService.trackingCompletion.observe(this, Observer { Id ->
-            showResult("Process for Notification Channel ID $Id is done!")
+    // 🔔 Start first notification service
+    private fun startNotificationService(id: String) {
+        NotificationService.trackingCompletion.observe(this, Observer {
+            showResult("NotificationService completed for ID $id")
         })
-
         val serviceIntent = Intent(this, NotificationService::class.java).apply {
-            putExtra(NotificationService.EXTRA_ID, "001")
+            putExtra(NotificationService.EXTRA_ID, id)
         }
-
         ContextCompat.startForegroundService(this, serviceIntent)
+    }
+
+    // 🔔 Start second notification service after third worker
+    private fun startSecondNotificationService(id: String) {
+        SecondNotificationService.trackingCompletion.observe(this, Observer {
+            showResult("SecondNotificationService completed for ID $id")
+        })
+        val intent = Intent(this, SecondNotificationService::class.java).apply {
+            putExtra(SecondNotificationService.EXTRA_ID, id)
+        }
+        ContextCompat.startForegroundService(this, intent)
     }
 }
